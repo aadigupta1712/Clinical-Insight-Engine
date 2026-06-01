@@ -1,12 +1,12 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { randomInt, randomBytes, scryptSync, timingSafeEqual } from "crypto";
-import rateLimit from "express-rate-limit";
+import bcrypt from "bcrypt";
+import { rateLimit } from "express-rate-limit";
+import { eq, and, gte } from "drizzle-orm";
 import { storage } from "./storage";
 import { getDb } from "./db";
-import { eq, and, gte } from "drizzle-orm";
 import { users, emailVerificationTokens } from "@shared/schema";
 import { sendVerificationCode } from "./email";
-
 // Extend express-session to include user data
 declare module "express-session" {
   interface SessionData {
@@ -24,20 +24,7 @@ interface RegisteredUser {
   licenseNumber: string;
 }
 
-const SALT_LENGTH = 32;
-const KEY_LENGTH = 64;
-
-function hashPassword(password: string): string {
-  const salt = randomBytes(SALT_LENGTH).toString("hex");
-  const hash = scryptSync(password, salt, KEY_LENGTH).toString("hex");
-  return `${salt}:${hash}`;
-}
-
-function verifyPassword(password: string, stored: string): boolean {
-  const [salt, key] = stored.split(":");
-  const hash = scryptSync(password, salt, KEY_LENGTH);
-  return hash.length === Buffer.from(key, "hex").length && timingSafeEqual(hash, Buffer.from(key, "hex"));
-}
+// removed duplicated functions
 
 /**
  * In-memory store for registered users.
@@ -131,6 +118,12 @@ export function createAuthRouter(): Router {
       if (existingDbUser) {
         return res.status(409).json({ message: "An account with this email already exists." });
       }
+    registeredUsers.set(email, {
+      fullName,
+      email,
+      passwordHash: hashPassword(password),
+      licenseNumber: licenseNumber,
+    });
 
       const passwordHash = hashPassword(password);
 
@@ -194,23 +187,24 @@ export function createAuthRouter(): Router {
     if (email === devEmail && password === devPassword) {
       userName = "Dr. Smith";
     } else {
-      try {
-        const db = getDb();
-        const [dbUser] = await db
-          .select()
-          .from(users)
-          .where(eq(users.email, email))
-          .limit(1);
+      // Check in-memory store (legacy)
+      const registeredUser = registeredUsers.get(email);
+      if (registeredUser && verifyPassword(password, registeredUser.passwordHash)) {
+        userFullName = registeredUser.fullName;
+      }
 
-        if (dbUser && verifyPassword(password, dbUser.passwordHash)) {
-          userFullName = dbUser.fullName;
-        }
+      // Also check DB
+      if (!userFullName) {
+        try {
+          const db = getDb();
+          const [dbUser] = await db
+            .select()
+            .from(users)
+            .where(eq(users.email, email))
+            .limit(1);
 
-        // Check in-memory store (legacy)
-        if (!userFullName) {
-          const registeredUser = registeredUsers.get(email);
-          if (registeredUser && verifyPassword(password, registeredUser.passwordHash)) {
-            userFullName = registeredUser.fullName;
+          if (dbUser && verifyPassword(password, dbUser.passwordHash)) {
+            userFullName = dbUser.fullName;
           }
         }
       } catch (_err) {
