@@ -6,6 +6,7 @@ import tempfile
 import time
 import numpy as np
 import pandas as pd
+from app.ml.prediction_cache import get_cache
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 import joblib
@@ -303,6 +304,10 @@ def interpret_prediction(model, scaler, features, input_data, cov_beta=None):
     """Interprets a single patient's data, yielding clinician and patient views."""
     if model is None:
         return {"error": "Dataset missing. Please ensure diabetes_dataset.csv is present."}
+      cache = get_cache()
+    cached = cache.get(input_data)
+    if cached is not None:
+        return cached
 
     input_df = pd.DataFrame(0, index=[0], columns=features)
     # ... (rest of the logic remains same but ensuring non-diagnostic language)
@@ -407,6 +412,7 @@ def interpret_prediction(model, scaler, features, input_data, cov_beta=None):
         "confidenceInterval": confidence_interval,
         "modelConfidence": round(float(max(prob, 1 - prob)), 4)
     }
+cache.set(input_data, result)
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "predict_file":
