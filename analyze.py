@@ -1,3 +1,4 @@
+from app.ml.prediction_cache import get_cache
 import sys
 import json
 import os
